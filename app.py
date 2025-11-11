@@ -1,75 +1,143 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# --- CONFIGURAÇÃO INICIAL ---
-st.set_page_config(page_title="Análise de Crimes no Brasil", layout="wide")
+# ---------------- CONFIG BÁSICA ----------------
+st.set_page_config(
+    page_title="Painel de Criminalidade – RS (dados.gov.br)",
+    layout="wide"
+)
 
-st.title("📊 Painel de Análise de Criminalidade no Brasil")
+st.title("📊 Painel de Ocorrências Criminais – Rio Grande do Sul")
 st.write(
     """
-    Este aplicativo interativo apresenta dados sobre crimes no Brasil,
-    com foco em crimes contra o patrimônio, permitindo filtrar por tipo de crime,
-    estado e ano. A base utilizada é um conjunto fictício inspirado em dados do portal
-    [dados.gov.br](https://dados.gov.br/).
+    Este painel utiliza dados oficiais de **ocorrências criminais no estado do Rio Grande do Sul**,
+    disponibilizados no Portal Brasileiro de Dados Abertos (**dados.gov.br**).
+    A ideia é aproximar o estudo de **Direito Penal** da análise empírica de dados de criminalidade.
     """
 )
 
-# --- BASE DE DADOS (EXEMPLO SIMPLES) ---
-# Você pode substituir esse CSV por um dataset real do dados.gov.br
-data = {
-    "Ano": [2020, 2020, 2020, 2021, 2021, 2021, 2022, 2022, 2022],
-    "Estado": ["SP", "RJ", "MG", "SP", "RJ", "MG", "SP", "RJ", "MG"],
-    "TipoCrime": ["Furto", "Furto", "Furto", "Roubo", "Roubo", "Roubo", "Estelionato", "Estelionato", "Estelionato"],
-    "Ocorrencias": [23000, 15000, 12000, 19000, 13000, 11000, 21000, 14000, 10000],
-}
-df = pd.DataFrame(data)
+# ---------------- CARREGAMENTO DOS DADOS ----------------
+@st.cache_data
+def carregar_dados():
+    """
+    Lê o arquivo CSV baixado do dados.gov.br e padroniza os nomes das colunas.
+    IMPORTANTE: se os nomes das colunas do seu CSV forem diferentes,
+    basta ajustar o dicionário do .rename() abaixo.
+    """
+    df = pd.read_csv("ocorrencias_rs.csv", sep=";", encoding="latin1")
 
-# --- FILTROS ---
+    # AJUSTE OS NOMES AQUI CONFORME O SEU ARQUIVO
+    df = df.rename(columns={
+        "ANO": "Ano",
+        "MUNICIPIO": "Municipio",
+        "NATUREZA": "TipoCrime",
+        "OCORRENCIAS": "Ocorrencias"
+    })
+
+    # remove linhas com dados faltantes básicos
+    df = df.dropna(subset=["Ano", "Municipio", "TipoCrime", "Ocorrencias"])
+
+    # garante tipos corretos
+    df["Ano"] = df["Ano"].astype(int)
+    df["Ocorrencias"] = df["Ocorrencias"].astype(int)
+
+    return df
+
+df = carregar_dados()
+
+st.markdown(
+    "🔗 **Fonte oficial dos dados:** "
+    "[Ocorrências criminais no estado do Rio Grande do Sul – dados.gov.br]"
+    "(https://dados.gov.br/dados/conjuntos-dados/ocorrencias-criminais-no-estado-do-rio-grande-do-sul)"
+)
+
+# ---------------- FILTROS (BARRA LATERAL) ----------------
 st.sidebar.header("🔍 Filtros")
-tipo_crime = st.sidebar.multiselect(
-    "Selecione o tipo de crime:", options=df["TipoCrime"].unique(), default=df["TipoCrime"].unique()
-)
-estado = st.sidebar.multiselect(
-    "Selecione o estado:", options=df["Estado"].unique(), default=df["Estado"].unique()
-)
-ano = st.sidebar.multiselect(
-    "Selecione o ano:", options=df["Ano"].unique(), default=df["Ano"].unique()
+
+anos = st.sidebar.multiselect(
+    "Ano",
+    options=sorted(df["Ano"].unique()),
+    default=sorted(df["Ano"].unique())[-5:]  # últimos 5 anos da série
 )
 
-# --- APLICAÇÃO DOS FILTROS ---
-df_filtrado = df.query("TipoCrime == @tipo_crime & Estado == @estado & Ano == @ano")
+tipos = st.sidebar.multiselect(
+    "Tipo de crime",
+    options=sorted(df["TipoCrime"].unique()),
+    default=sorted(df["TipoCrime"].unique())[:5]
+)
 
-# --- GRÁFICO 1: Crimes por Estado ---
-fig1 = px.bar(
-    df_filtrado,
-    x="Estado",
+municipios = st.sidebar.multiselect(
+    "Município",
+    options=sorted(df["Municipio"].unique()),
+    default=None
+)
+
+df_filtrado = df.copy()
+if anos:
+    df_filtrado = df_filtrado[df_filtrado["Ano"].isin(anos)]
+if tipos:
+    df_filtrado = df_filtrado[df_filtrado["TipoCrime"].isin(tipos)]
+if municipios:
+    df_filtrado = df_filtrado[df_filtrado["Municipio"].isin(municipios)]
+
+# ---------------- INDICADORES RESUMO ----------------
+col1, col2, col3 = st.columns(3)
+
+total_ocorrencias = int(df_filtrado["Ocorrencias"].sum())
+total_municipios = df_filtrado["Municipio"].nunique()
+total_tipos = df_filtrado["TipoCrime"].nunique()
+
+col1.metric("Total de ocorrências no recorte", f"{total_ocorrencias:,}".replace(",", "."))
+col2.metric("Municípios contemplados", total_municipios)
+col3.metric("Tipos de crime analisados", total_tipos)
+
+st.write("---")
+
+# ---------------- GRÁFICO 1 – CRIMES POR MUNICÍPIO ----------------
+st.subheader("📍 Ocorrências por município")
+
+df_mun = (
+    df_filtrado.groupby(["Municipio"], as_index=False)["Ocorrencias"]
+    .sum()
+    .sort_values("Ocorrencias", ascending=False)
+    .head(20)  # top 20 para não poluir
+)
+
+fig_mun = px.bar(
+    df_mun,
+    x="Municipio",
     y="Ocorrencias",
-    color="TipoCrime",
-    barmode="group",
-    title="Ocorrências de Crimes por Estado",
-    text="Ocorrencias",
+    title="Top 20 municípios por número de ocorrências",
+    labels={"Municipio": "Município", "Ocorrencias": "Nº de ocorrências"},
 )
-st.plotly_chart(fig1, use_container_width=True)
+fig_mun.update_layout(xaxis_tickangle=-45)
+st.plotly_chart(fig_mun, use_container_width=True)
 
-# --- GRÁFICO 2: Evolução por Ano ---
-fig2 = px.line(
-    df_filtrado,
+# ---------------- GRÁFICO 2 – EVOLUÇÃO TEMPORAL ----------------
+st.subheader("📈 Evolução das ocorrências por ano e tipo de crime")
+
+df_ano_tipo = (
+    df_filtrado.groupby(["Ano", "TipoCrime"], as_index=False)["Ocorrencias"]
+    .sum()
+)
+
+fig_ano = px.line(
+    df_ano_tipo,
     x="Ano",
     y="Ocorrencias",
     color="TipoCrime",
     markers=True,
-    title="Evolução dos Crimes ao Longo dos Anos",
+    labels={"Ano": "Ano", "Ocorrencias": "Nº de ocorrências", "TipoCrime": "Tipo de crime"},
 )
-st.plotly_chart(fig2, use_container_width=True)
+st.plotly_chart(fig_ano, use_container_width=True)
 
-# --- TABELA E RESUMO ---
-st.subheader("📋 Dados Filtrados")
-st.dataframe(df_filtrado)
-
-total = int(df_filtrado["Ocorrencias"].sum())
-st.metric("Total de ocorrências selecionadas", total)
+# ---------------- TABELA DETALHADA ----------------
+st.subheader("📋 Dados detalhados (após filtros)")
+st.dataframe(df_filtrado.sort_values(["Ano", "Municipio", "TipoCrime"]))
 
 st.write("---")
-st.caption("Desenvolvido como projeto de Direito Penal e Programação – FGV")
+st.caption(
+    "Aplicativo desenvolvido para a disciplina de Programação, utilizando dados oficiais "
+    "de ocorrências criminais (dados.gov.br) e relacionando-os com temas de Direito Penal."
+)
