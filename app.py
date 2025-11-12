@@ -20,8 +20,8 @@ st.write(
 # ---------------- CARREGAMENTO DOS DADOS ----------------
 @st.cache_data
 def carregar_dados():
-    # Lê o arquivo Excel real do dados.mg.gov.br
-    df = pd.read_excel("crimes_violentos_2023.xlsx")
+    
+    df = pd.read_csv("crimes_violentos_2023.csv", sep=";", encoding="utf-8")
 
     # Renomeia colunas principais (ajuste se o nome no Excel for diferente)
     df = df.rename(columns={
